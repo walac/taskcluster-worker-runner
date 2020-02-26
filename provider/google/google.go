@@ -2,6 +2,7 @@ package google
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/taskcluster/taskcluster-worker-runner/cfg"
@@ -18,6 +19,8 @@ type GoogleProvider struct {
 	workerManagerClientFactory tc.WorkerManagerClientFactory
 	metadataService            MetadataService
 	proto                      *protocol.Protocol
+	workerManager              tc.WorkerManager
+	workerInfo                 provider.WorkerInfo
 }
 
 func (p *GoogleProvider) ConfigureRun(state *run.State) error {
@@ -47,12 +50,18 @@ func (p *GoogleProvider) ConfigureRun(state *run.State) error {
 		return fmt.Errorf("Could not create worker manager client: %v", err)
 	}
 
+	p.workerManager = wm
+
 	workerIdentityProofMap := map[string]interface{}{"token": interface{}(proofToken)}
 
 	err = provider.RegisterWorker(state, wm, userData.WorkerPoolID, userData.ProviderID, userData.WorkerGroup, workerID, workerIdentityProofMap)
 	if err != nil {
 		return err
 	}
+
+	p.workerInfo.WorkerPoolID = userData.WorkerPoolID
+	p.workerInfo.WorkerGroup = userData.WorkerGroup
+	p.workerInfo.WorkerID = workerID
 
 	providerMetadata := map[string]interface{}{
 		"instance-id": workerID,
@@ -111,6 +120,13 @@ func (p *GoogleProvider) SetProtocol(proto *protocol.Protocol) {
 }
 
 func (p *GoogleProvider) WorkerStarted() error {
+	p.proto.Register("shutdown", func(msg protocol.Message) {
+		if err := provider.RemoveWorker(p.workerManager, &p.workerInfo); err != nil {
+			log.Printf("Shutdown error: %v\n", err)
+		}
+	})
+	p.proto.Capabilities.Add("shutdown")
+
 	return nil
 }
 

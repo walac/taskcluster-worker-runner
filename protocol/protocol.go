@@ -1,6 +1,9 @@
 package protocol
 
-import "sync"
+import (
+	"log"
+	"sync"
+)
 
 type MessageCallback func(msg Message)
 
@@ -124,9 +127,13 @@ func (prot *Protocol) recvLoop() {
 		if !ok {
 			return
 		}
-		callbacks := prot.callbacks[msg.Type]
-		for _, cb := range callbacks {
-			cb(msg)
+		callbacks, ok := prot.callbacks[msg.Type]
+		if ok {
+			for _, cb := range callbacks {
+				cb(msg)
+			}
+		} else {
+			log.Printf("No callback registered for message %s\n", msg.Type)
 		}
 	}
 }

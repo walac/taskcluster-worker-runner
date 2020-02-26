@@ -21,6 +21,8 @@ type AzureProvider struct {
 	metadataService            MetadataService
 	proto                      *protocol.Protocol
 	terminationTicker          *time.Ticker
+	workerManager              tc.WorkerManager
+	workerInfo                 provider.WorkerInfo
 }
 
 type CustomData struct {
@@ -64,6 +66,8 @@ func (p *AzureProvider) ConfigureRun(state *run.State) error {
 		return fmt.Errorf("Could not create worker manager client: %v", err)
 	}
 
+	p.workerManager = wm
+
 	workerIdentityProofMap := map[string]interface{}{
 		"document": interface{}(document),
 	}
@@ -79,6 +83,10 @@ func (p *AzureProvider) ConfigureRun(state *run.State) error {
 	if err != nil {
 		return err
 	}
+
+	p.workerInfo.WorkerPoolID = customData.WorkerPoolId
+	p.workerInfo.WorkerGroup = customData.WorkerGroup
+	p.workerInfo.WorkerID = instanceData.Compute.VMID
 
 	providerMetadata := map[string]interface{}{
 		"vm-id":         instanceData.Compute.VMID,
@@ -152,6 +160,12 @@ func (p *AzureProvider) checkTerminationTime() bool {
 }
 
 func (p *AzureProvider) WorkerStarted() error {
+	p.proto.Register("shutdown", func(msg protocol.Message) {
+		if err := provider.RemoveWorker(p.workerManager, &p.workerInfo); err != nil {
+			log.Printf("Shutdown error: %v\n", err)
+		}
+	})
+
 	// start polling for graceful shutdown
 	p.terminationTicker = time.NewTicker(30 * time.Second)
 	go func() {

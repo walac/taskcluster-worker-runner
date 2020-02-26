@@ -20,6 +20,8 @@ const TERMINATION_PATH = "/meta-data/spot/termination-time"
 type AWSProvider struct {
 	runnercfg                  *cfg.RunnerConfig
 	workerManagerClientFactory tc.WorkerManagerClientFactory
+	workerManager              tc.WorkerManager
+	workerInfo                 provider.WorkerInfo
 	metadataService            MetadataService
 	proto                      *protocol.Protocol
 	terminationTicker          *time.Ticker
@@ -53,6 +55,8 @@ func (p *AWSProvider) ConfigureRun(state *run.State) error {
 		return fmt.Errorf("Could not create worker manager client: %v", err)
 	}
 
+	p.workerManager = wm
+
 	workerIdentityProofMap := map[string]interface{}{
 		"document":  interface{}(iid_string),
 		"signature": interface{}(instanceIdentityDocumentSignature),
@@ -69,6 +73,10 @@ func (p *AWSProvider) ConfigureRun(state *run.State) error {
 	if err != nil {
 		return err
 	}
+
+	p.workerInfo.WorkerPoolID = userData.WorkerPoolId
+	p.workerInfo.WorkerGroup = userData.WorkerGroup
+	p.workerInfo.WorkerID = iid_json.InstanceId
 
 	publicHostname, err := p.metadataService.queryMetadata("/meta-data/public-hostname")
 	if err != nil {
@@ -132,6 +140,15 @@ func (p *AWSProvider) checkTerminationTime() {
 func (p *AWSProvider) WorkerStarted() error {
 	// start polling for graceful shutdown
 	p.terminationTicker = time.NewTicker(30 * time.Second)
+
+	p.proto.Register("shutdown", func(msg protocol.Message) {
+		if err := provider.RemoveWorker(p.workerManager, &p.workerInfo); err != nil {
+			log.Printf("Shutdown error: %v\n", err)
+		}
+	})
+
+	p.proto.Capabilities.Add("shutdown")
+
 	go func() {
 		for {
 			<-p.terminationTicker.C
